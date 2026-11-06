@@ -76,3 +76,7 @@ Uploaded documents, who can access them, and a trustworthy record of every acces
 
 \- SECRET\_KEY must be set in production (SEALTRAIL\_ENV=prod); the app refuses to start without it.
 
+\- Renaming a document does not re-validate the file extension.
+
+\- Audit writes are not serialized: under heavy concurrent load two entries could chain from the same predecessor and make verification fail.
+
