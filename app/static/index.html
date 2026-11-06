@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SealTrail-IG</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 24px auto; padding: 0 12px; color: #222; }
+  h1 { margin-bottom: 4px; }
+  section { border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; margin: 14px 0; }
+  input, select, button { font: inherit; padding: 6px 10px; margin: 2px; }
+  button { cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px; border-bottom: 1px solid #eee; }
+  #msg { padding: 8px 12px; border-radius: 6px; min-height: 1.2em; }
+  #msg.ok { background: #e6f6ea; } #msg.bad { background: #fdeaea; }
+  .hidden { display: none; } .muted { color: #666; font-size: 0.9em; }
+</style>
+</head>
+<body>
+<h1>SealTrail-IG</h1>
+<div class="muted">Secure document sharing with an audit trail</div>
+<div id="msg"></div>
+
+<section id="loginBox">
+  <h3>Log in</h3>
+  <input id="email" placeholder="email" autocomplete="username">
+  <input id="password" type="password" placeholder="password" autocomplete="current-password">
+  <button id="loginBtn">Log in</button>
+</section>
+
+<div id="app" class="hidden">
+  <section>
+    <b id="who"></b> <button id="logoutBtn">Log out</button>
+  </section>
+
+  <section id="uploadBox">
+    <h3>Upload (owners only)</h3>
+    <input id="file" type="file">
+    <input id="category" placeholder="category">
+    <button id="uploadBtn">Upload</button>
+    <div class="muted">Allowed: pdf, png, jpg, jpeg, txt. Max 5 MB.</div>
+  </section>
+
+  <section>
+    <h3>Documents</h3>
+    <input id="search" placeholder="search by name">
+    <button id="searchBtn">Search</button>
+    <table>
+      <thead><tr><th>Name</th><th>Category</th><th>Size</th><th>Actions</th></tr></thead>
+      <tbody id="docs"></tbody>
+    </table>
+  </section>
+
+  <section id="shareBox" class="hidden">
+    <h3>Sharing: <span id="shareDoc"></span></h3>
+    <input id="shareEmail" placeholder="user email">
+    <select id="shareLevel"><option value="read">read</option><option value="edit">edit</option></select>
+    <button id="shareBtn">Share</button>
+    <table>
+      <thead><tr><th>User</th><th>Level</th><th></th></tr></thead>
+      <tbody id="shares"></tbody>
+    </table>
+  </section>
+</div>
+
+<script>
+let token = null, me = null, shareDocId = null;
+const $ = id => document.getElementById(id);
+
+function say(text, bad) { const m = $('msg'); m.textContent = text; m.className = bad ? 'bad' : 'ok'; }
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers || {}, token ? { Authorization: 'Bearer ' + token } : {});
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let d = ''; try { d = (await r.json()).detail; } catch (e) {}
+    throw new Error(r.status + ': ' + (d || r.statusText));
+  }
+  return r;
+}
+
+// Build elements with textContent only, so file names can never inject HTML.
+function cell(text) { const td = document.createElement('td'); td.textContent = text; return td; }
+function btn(label, fn) { const b = document.createElement('button'); b.textContent = label; b.onclick = fn; return b; }
+
+async function login() {
+  try {
+    const body = new URLSearchParams({ username: $('email').value.trim(), password: $('password').value });
+    const r = await api('/auth/login', { method: 'POST', body });
+    token = (await r.json()).access_token;
+    me = await (await api('/auth/me')).json();
+    $('password').value = '';
+    $('loginBox').classList.add('hidden');
+    $('app').classList.remove('hidden');
+    $('who').textContent = me.email + ' (' + me.role + ')';
+    $('uploadBox').classList.toggle('hidden', me.role !== 'owner');
+    say('Logged in.');
+    loadDocs();
+  } catch (e) { say(e.message, true); }
+}
+
+function logout() {
+  token = null; me = null; shareDocId = null;
+  $('app').classList.add('hidden'); $('shareBox').classList.add('hidden');
+  $('loginBox').classList.remove('hidden');
+  $('docs').replaceChildren();
+  say('Logged out.');
+}
+
+async function loadDocs() {
+  try {
+    const q = $('search').value.trim();
+    const r = await api('/documents' + (q ? '?name=' + encodeURIComponent(q) : ''));
+    const docs = await r.json();
+    const rows = docs.map(d => {
+      const tr = document.createElement('tr');
+      tr.append(cell(d.name), cell(d.category || ''), cell(Math.ceil(d.size / 1024) + ' KB'));
+      const act = document.createElement('td');
+      act.append(btn('Download', () => download(d)),
+                 btn('Rename', () => rename(d)));
+      if (d.owner_id === me.id) {
+        act.append(btn('Share', () => openShare(d)), btn('Delete', () => remove(d)));
+      }
+      tr.append(act);
+      return tr;
+    });
+    $('docs').replaceChildren(...rows);
+    if (!docs.length) say('No documents to show.');
+  } catch (e) { say(e.message, true); }
+}
+
+async function upload() {
+  const f = $('file').files[0];
+  if (!f) return say('Choose a file first.', true);
+  const fd = new FormData(); fd.append('file', f); fd.append('category', $('category').value);
+  try { await api('/documents', { method: 'POST', body: fd }); say('Uploaded ' + f.name); $('file').value = ''; loadDocs(); }
+  catch (e) { say(e.message, true); }
+}
+
+async function download(d) {
+  try {
+    const blob = await (await api('/documents/' + d.id + '/download')).blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = d.name; a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (e) { say(e.message, true); }
+}
+
+async function rename(d) {
+  const name = prompt('New name (keep the extension):', d.name);
+  if (!name) return;
+  try {
+    await api('/documents/' + d.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    say('Renamed.'); loadDocs();
+  } catch (e) { say(e.message, true); }
+}
+
+async function remove(d) {
+  if (!confirm('Delete ' + d.name + '?')) return;
+  try { await api('/documents/' + d.id, { method: 'DELETE' }); say('Deleted.'); closeShare(); loadDocs(); }
+  catch (e) { say(e.message, true); }
+}
+
+function closeShare() { shareDocId = null; $('shareBox').classList.add('hidden'); }
+
+async function openShare(d) {
+  shareDocId = d.id; $('shareDoc').textContent = d.name;
+  $('shareBox').classList.remove('hidden');
+  loadShares();
+}
+
+async function loadShares() {
+  try {
+    const list = await (await api('/documents/' + shareDocId + '/shares')).json();
+    const rows = list.map(s => {
+      const tr = document.createElement('tr');
+      tr.append(cell(s.email), cell(s.level));
+      const td = document.createElement('td');
+      td.append(btn('Revoke', () => revoke(s)));
+      tr.append(td); return tr;
+    });
+    $('shares').replaceChildren(...rows);
+  } catch (e) { say(e.message, true); }
+}
+
+async function share() {
+  try {
+    await api('/documents/' + shareDocId + '/share', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: $('shareEmail').value.trim(), level: $('shareLevel').value })
+    });
+    say('Shared.'); $('shareEmail').value = ''; loadShares();
+  } catch (e) { say(e.message, true); }
+}
+
+async function revoke(s) {
+  try { await api('/documents/' + shareDocId + '/share/' + s.user_id, { method: 'DELETE' }); say('Access revoked.'); loadShares(); }
+  catch (e) { say(e.message, true); }
+}
+
+$('loginBtn').onclick = login;
+$('password').onkeydown = e => { if (e.key === 'Enter') login(); };
+$('logoutBtn').onclick = logout;
+$('uploadBtn').onclick = upload;
+$('searchBtn').onclick = loadDocs;
+$('shareBtn').onclick = share;
+</script>
+</body>
+</html>
