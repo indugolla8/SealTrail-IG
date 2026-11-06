@@ -62,5 +62,7 @@ Uploaded documents, who can access them, and a trustworthy record of every acces
 
 \- Runs over plain HTTP locally; production needs HTTPS and a strong secret key from the environment.
 
-\- Tokens are not revocable before expiry.
+\- Tokens expire after 2 hours but cannot be revoked earlier.
+
+\- SECRET\_KEY must be set in production (SEALTRAIL\_ENV=prod); the app refuses to start without it.
 
