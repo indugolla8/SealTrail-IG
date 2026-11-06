@@ -1,3 +1,6 @@
+import time
+from collections import defaultdict, deque
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -10,6 +13,18 @@ from .audit import log_event
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 oauth2 = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+MAX_FAILS = 5
+WINDOW_SECONDS = 600  # 10 minutes
+_failed = defaultdict(deque)  # email -> timestamps of recent failed logins
+
+
+def _recent_fails(key: str):
+    now = time.monotonic()
+    q = _failed[key]
+    while q and now - q[0] > WINDOW_SECONDS:
+        q.popleft()
+    return q
 
 
 def get_current_user(token: str = Depends(oauth2), db: Session = Depends(get_db)) -> User:
@@ -34,10 +49,20 @@ def require_admin(user: User = Depends(get_current_user), db: Session = Depends(
 
 @router.post("/login")
 def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    key = form.username.lower()
+    fails = _recent_fails(key)
+    if len(fails) >= MAX_FAILS:
+        log_event(db, None, "login_locked", "denied", actor_email=form.username,
+                  details="too many failed attempts")
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Try again later.")
+
     user = db.query(User).filter(User.email == form.username).first()
     if user is None or not verify_password(form.password, user.password_hash):
+        fails.append(time.monotonic())
         log_event(db, user, "login", "denied", actor_email=form.username)
         raise HTTPException(status_code=401, detail="Wrong email or password")
+
+    _failed.pop(key, None)
     log_event(db, user, "login", "allowed")
     return {"access_token": create_token(user.id), "token_type": "bearer"}
 
