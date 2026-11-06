@@ -46,13 +46,19 @@ Uploaded documents, who can access them, and a trustworthy record of every acces
 
 | Sharing with admin to bypass the content rule | Sharing with admins is rejected | sharing.py |
 
+| Password guessing | 5 failed logins per email in 10 minutes returns 429; lockouts are audited | auth.py |
+
+| Forged login tokens | Signed JWTs with pinned algorithm; SECRET\_KEY from environment, app refuses to start in prod without it | security.py |
+
 
 
 \## Known gaps (accepted for now)
 
 \- Audit chain is tamper-evident, not tamper-proof: someone with full database access could rewrite the whole chain.
 
-\- No rate limiting or lockout on login.
+\- Login lockout is in memory: it resets on restart and is not shared across multiple workers. It is per email, not per IP.
+
+\- An attacker can deliberately lock a known email out for 10 minutes (denial of service on that account).
 
 \- `.txt` files have no content check.
 
@@ -60,7 +66,7 @@ Uploaded documents, who can access them, and a trustworthy record of every acces
 
 \- Files are stored unencrypted on disk.
 
-\- Runs over plain HTTP locally; production needs HTTPS and a strong secret key from the environment.
+\- Runs over plain HTTP locally; production needs HTTPS.
 
 \- Tokens expire after 2 hours but cannot be revoked earlier.
 
