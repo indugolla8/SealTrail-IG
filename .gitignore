@@ -225,3 +225,5 @@ __pycache__/
 *.db
 uploads/
 test.txt
+__pycache__/
+.pytest_cache/
