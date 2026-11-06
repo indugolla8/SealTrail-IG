@@ -11,7 +11,7 @@ A small FastAPI service for storing documents with strict per-user access contro
 - Upload checks: extension allowlist, magic-byte check, 5 MB limit, safe filenames
 - Login lockout: 5 failed attempts per email in 10 minutes returns 429
 - JWT login (2-hour tokens), bcrypt password hashing
-
+- Web UI at `/` for login, upload, share, revoke, restore and access history
 ## Setup (Windows PowerShell)
 
 ```
@@ -56,6 +56,7 @@ python -c "import secrets; print(secrets.token_hex(32))"
 - `POST /documents`, `GET /documents`, `GET /documents/{id}/download`, `PUT /documents/{id}`, `DELETE /documents/{id}`
 - `POST /documents/{id}/share`, `GET /documents/{id}/shares`, `DELETE /documents/{id}/share/{user_id}`
 - `GET /admin/audit`, `GET /admin/audit/verify` (admin only)
+- `GET /documents/deleted/list`, `POST /documents/{id}/restore`, `GET /documents/{id}/history` (owner only)
 
 ## Tests
 
