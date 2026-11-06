@@ -108,7 +108,15 @@ def edit(doc_id: int, body: EditBody, user: User = Depends(get_current_user),
          db: Session = Depends(get_db)):
     doc = check_access(db, user, doc_id, "edit", "edit")
     if body.name:
-        doc.name = os.path.basename(body.name)
+        new_name = os.path.basename(body.name)
+        old_ext = os.path.splitext(doc.name)[1].lower()
+        new_ext = os.path.splitext(new_name)[1].lower()
+        if new_ext != old_ext or new_ext not in ALLOWED:
+            log_event(db, user, "edit", "denied", document_id=doc.id,
+                      details=f"rename changes extension: {old_ext} -> {new_ext}")
+            raise HTTPException(status_code=400,
+                                detail="New name must keep the original file extension")
+        doc.name = new_name
     if body.category is not None:
         doc.category = body.category
     db.commit()

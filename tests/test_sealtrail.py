@@ -153,179 +153,6 @@ def test_edit_share_allows_edit_but_not_delete_or_share(client, tokens, doc_id):
     r = client.put(f"/documents/{doc_id}", headers=v, json={"name": "by-viewer.txt"})
     assert r.status_code == 200
     assert r.json()["name"] == "by-viewer.txt"
-    assert r.json()["owner_id"] != 3 or True  # ownership check below
-    assert client.delete(f"/documents/{doc_id}", headers=v).status_code == 404
-    assert share(client, tokens, doc_id, "edit", who="viewer").status_code == 404
-
-
-def test_revoke_takes_effect_immediately(client, tokens, doc_id):
-    v = tokens["viewer"]
-    share(client, tokens, doc_id, "edit")
-    assert client.get(f"/documents/{doc_id}/download", headers=v).status_code == 200
-
-    viewer_id = client.get("/auth/me", headers=v).json()["id"]
-    r = client.delete(f"/documents/{doc_id}/share/{viewer_id}", headers=tokens["owner"])
-    assert r.status_code == 200
-
-    assert client.get(f"/documents/{doc_id}/download", headers=v).status_code == 404
-    assert client.put(f"/documents/{doc_id}", headers=v, json={"name": "x.txt"}).status_code == 404
-    assert doc_id not in [d["id"] for d in client.get("/documents", headers=v).json()]
-
-import os
-import tempfile
-from pathlib import Path
-
-# Must be set BEFORE importing the app: database.py reads it at import time.
-_tmp = Path(tempfile.mkdtemp(prefix="sealtrail_test_"))
-os.environ["DATABASE_URL"] = f"sqlite:///{(_tmp / 'test.db').as_posix()}"
-
-import pytest
-from fastapi.testclient import TestClient
-
-from app import documents, seed
-from app.main import app
-
-PASSWORDS = {
-    "admin": ("admin@sealtrail.test", "Admin#Demo2026"),
-    "owner": ("owner@sealtrail.test", "Owner#Demo2026"),
-    "viewer": ("viewer@sealtrail.test", "Viewer#Demo2026"),
-}
-
-
-@pytest.fixture(scope="session")
-def client():
-    uploads = _tmp / "uploads"
-    uploads.mkdir()
-    documents.UPLOAD_DIR = str(uploads)  # keep test files out of the real uploads/
-    seed.run()
-    return TestClient(app)
-
-
-@pytest.fixture(scope="session")
-def tokens(client):
-    out = {}
-    for role, (email, pw) in PASSWORDS.items():
-        r = client.post("/auth/login", data={"username": email, "password": pw})
-        assert r.status_code == 200, f"login failed for {role}"
-        out[role] = {"Authorization": f"Bearer {r.json()['access_token']}"}
-    return out
-
-
-def upload(client, headers, name="a.txt", content=b"hello sealtrail"):
-    return client.post("/documents", headers=headers,
-                       files={"file": (name, content)}, data={"category": "t"})
-
-
-@pytest.fixture()
-def doc_id(client, tokens):
-    r = upload(client, tokens["owner"])
-    assert r.status_code == 200
-    return r.json()["id"]
-
-
-# ---------- authentication ----------
-
-def test_wrong_password_rejected(client):
-    r = client.post("/auth/login", data={"username": "owner@sealtrail.test", "password": "nope"})
-    assert r.status_code == 401
-
-
-def test_no_token_rejected(client):
-    assert client.get("/documents").status_code == 401
-
-
-# ---------- upload rules ----------
-
-def test_owner_can_upload_and_download(client, tokens, doc_id):
-    r = client.get(f"/documents/{doc_id}/download", headers=tokens["owner"])
-    assert r.status_code == 200
-    assert r.content == b"hello sealtrail"
-
-
-def test_viewer_cannot_upload(client, tokens):
-    assert upload(client, tokens["viewer"]).status_code == 403
-
-
-def test_admin_cannot_upload(client, tokens):
-    assert upload(client, tokens["admin"]).status_code == 403
-
-
-def test_bad_extension_rejected(client, tokens):
-    assert upload(client, tokens["owner"], "x.sql", b"select 1").status_code == 400
-
-
-def test_fake_png_rejected(client, tokens):
-    assert upload(client, tokens["owner"], "x.png", b"not really a png").status_code == 400
-
-
-def test_empty_file_rejected(client, tokens):
-    assert upload(client, tokens["owner"], "e.txt", b"").status_code == 400
-
-
-def test_oversized_file_rejected(client, tokens):
-    big = b"a" * (5 * 1024 * 1024 + 1)
-    assert upload(client, tokens["owner"], "big.txt", big).status_code == 413
-
-
-def test_path_traversal_name_is_flattened(client, tokens):
-    r = upload(client, tokens["owner"], "../../evil.txt")
-    assert r.status_code == 200
-    assert r.json()["name"] == "evil.txt"
-
-
-# ---------- access control ----------
-
-def test_viewer_gets_404_on_unshared_doc(client, tokens, doc_id):
-    v = tokens["viewer"]
-    assert client.get(f"/documents/{doc_id}/download", headers=v).status_code == 404
-    assert client.put(f"/documents/{doc_id}", headers=v, json={"name": "x.txt"}).status_code == 404
-    assert client.delete(f"/documents/{doc_id}", headers=v).status_code == 404
-
-
-def test_unshared_doc_not_in_viewer_list(client, tokens, doc_id):
-    r = client.get("/documents", headers=tokens["viewer"])
-    assert doc_id not in [d["id"] for d in r.json()]
-
-
-def test_unknown_id_looks_same_as_forbidden(client, tokens, doc_id):
-    v = tokens["viewer"]
-    forbidden = client.get(f"/documents/{doc_id}/download", headers=v)
-    missing = client.get("/documents/999999/download", headers=v)
-    assert forbidden.status_code == missing.status_code == 404
-    assert forbidden.json() == missing.json()
-
-
-def test_admin_cannot_read_file_contents(client, tokens, doc_id):
-    r = client.get(f"/documents/{doc_id}/download", headers=tokens["admin"])
-    assert r.status_code == 404
-
-
-def test_deleted_doc_is_gone(client, tokens, doc_id):
-    assert client.delete(f"/documents/{doc_id}", headers=tokens["owner"]).status_code == 200
-    assert client.get(f"/documents/{doc_id}/download", headers=tokens["owner"]).status_code == 404
-
-
-# ---------- sharing and revoking ----------
-
-def share(client, tokens, doc_id, level, who="owner"):
-    return client.post(f"/documents/{doc_id}/share", headers=tokens[who],
-                       json={"email": "viewer@sealtrail.test", "level": level})
-
-
-def test_read_share_allows_download_but_not_edit(client, tokens, doc_id):
-    assert share(client, tokens, doc_id, "read").status_code == 200
-    v = tokens["viewer"]
-    assert client.get(f"/documents/{doc_id}/download", headers=v).status_code == 200
-    assert doc_id in [d["id"] for d in client.get("/documents", headers=v).json()]
-    assert client.put(f"/documents/{doc_id}", headers=v, json={"name": "x.txt"}).status_code == 404
-
-
-def test_edit_share_allows_edit_but_not_delete_or_share(client, tokens, doc_id):
-    assert share(client, tokens, doc_id, "edit").status_code == 200
-    v = tokens["viewer"]
-    r = client.put(f"/documents/{doc_id}", headers=v, json={"name": "by-viewer.txt"})
-    assert r.status_code == 200
-    assert r.json()["name"] == "by-viewer.txt"
     assert client.delete(f"/documents/{doc_id}", headers=v).status_code == 404
     assert share(client, tokens, doc_id, "edit", who="viewer").status_code == 404
 
@@ -391,6 +218,8 @@ def test_login_lockout_after_five_failures(client):
                                           "password": "Owner#Demo2026"})
     assert ok.status_code == 200
     auth._failed.clear()
+
+
 # ---------- restore and history ----------
 
 def test_restore_deleted_document(client, tokens, doc_id):
@@ -418,6 +247,18 @@ def test_history_is_owner_only_and_shows_denials(client, tokens, doc_id):
     assert any(h["result"] == "denied" and h["action"] == "download" for h in r.json())
     assert client.get(f"/documents/{doc_id}/history", headers=tokens["viewer"]).status_code == 404
     assert client.get(f"/documents/{doc_id}/history", headers=tokens["admin"]).status_code == 404
+
+
+# ---------- rename ----------
+
+def test_rename_cannot_change_extension(client, tokens, doc_id):
+    o = tokens["owner"]
+    r = client.put(f"/documents/{doc_id}", headers=o, json={"name": "evil.exe"})
+    assert r.status_code == 400
+    r = client.put(f"/documents/{doc_id}", headers=o, json={"name": "renamed.txt"})
+    assert r.status_code == 200
+    assert r.json()["name"] == "renamed.txt"
+
 
 # ---------- audit chain (keep this LAST) ----------
 
