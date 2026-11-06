@@ -224,3 +224,4 @@ venv/
 __pycache__/
 *.db
 uploads/
+test.txt
