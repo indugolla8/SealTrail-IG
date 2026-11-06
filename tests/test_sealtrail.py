@@ -391,7 +391,33 @@ def test_login_lockout_after_five_failures(client):
                                           "password": "Owner#Demo2026"})
     assert ok.status_code == 200
     auth._failed.clear()
+# ---------- restore and history ----------
 
+def test_restore_deleted_document(client, tokens, doc_id):
+    o = tokens["owner"]
+    assert client.delete(f"/documents/{doc_id}", headers=o).status_code == 200
+    assert doc_id in [d["id"] for d in client.get("/documents/deleted/list", headers=o).json()]
+    assert client.post(f"/documents/{doc_id}/restore", headers=o).status_code == 200
+    assert client.get(f"/documents/{doc_id}/download", headers=o).status_code == 200
+
+
+def test_viewer_cannot_restore(client, tokens, doc_id):
+    client.delete(f"/documents/{doc_id}", headers=tokens["owner"])
+    assert client.post(f"/documents/{doc_id}/restore", headers=tokens["viewer"]).status_code == 404
+    assert client.get(f"/documents/{doc_id}/download", headers=tokens["owner"]).status_code == 404
+
+
+def test_restore_of_live_document_is_404(client, tokens, doc_id):
+    assert client.post(f"/documents/{doc_id}/restore", headers=tokens["owner"]).status_code == 404
+
+
+def test_history_is_owner_only_and_shows_denials(client, tokens, doc_id):
+    client.get(f"/documents/{doc_id}/download", headers=tokens["viewer"])  # denied
+    r = client.get(f"/documents/{doc_id}/history", headers=tokens["owner"])
+    assert r.status_code == 200
+    assert any(h["result"] == "denied" and h["action"] == "download" for h in r.json())
+    assert client.get(f"/documents/{doc_id}/history", headers=tokens["viewer"]).status_code == 404
+    assert client.get(f"/documents/{doc_id}/history", headers=tokens["admin"]).status_code == 404
 
 # ---------- audit chain (keep this LAST) ----------
 

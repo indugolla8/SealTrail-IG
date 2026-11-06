@@ -10,7 +10,7 @@ Uploaded documents, who can access them, and a trustworthy record of every acces
 
 \## Roles
 
-\- \*\*owner\*\*: uploads documents, shares and revokes access, edits and deletes their own documents.
+\- \*\*owner\*\*: uploads documents, shares and revokes access, edits, deletes and restores their own documents, and views the access history of their documents.
 
 \- \*\*viewer\*\*: reads or edits only documents shared with them.
 
@@ -50,6 +50,10 @@ Uploaded documents, who can access them, and a trustworthy record of every acces
 
 | Forged login tokens | Signed JWTs with pinned algorithm; SECRET\_KEY from environment, app refuses to start in prod without it | security.py |
 
+| Owner can't see who touches their documents | Owner-only history from the audit log, including denied attempts | lifecycle.py |
+
+| Someone restores another user's deleted document | Restore is owner-only; non-owners get the same 404 as a missing document; restores are audited | lifecycle.py |
+
 
 
 \## Known gaps (accepted for now)
@@ -62,7 +66,7 @@ Uploaded documents, who can access them, and a trustworthy record of every acces
 
 \- `.txt` files have no content check.
 
-\- Deleted documents are soft-deleted; the file stays on disk.
+\- Deleted documents are soft-deleted; the file stays on disk. Restore only clears the soft-delete flag, and there is no permanent-delete or retention policy.
 
 \- Files are stored unencrypted on disk.
 
