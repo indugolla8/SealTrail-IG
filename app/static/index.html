@@ -62,6 +62,20 @@
       <tbody id="shares"></tbody>
     </table>
   </section>
+
+  <section id="histBox" class="hidden">
+    <h3>History: <span id="histDoc"></span></h3>
+    <table>
+      <thead><tr><th>Time</th><th>Who</th><th>Action</th><th>Result</th></tr></thead>
+      <tbody id="hist"></tbody>
+    </table>
+  </section>
+
+  <section id="deletedBox">
+    <h3>Deleted (owners)</h3>
+    <button id="deletedBtn">Show deleted</button>
+    <table><tbody id="deleted"></tbody></table>
+  </section>
 </div>
 
 <script>
@@ -95,6 +109,7 @@ async function login() {
     $('app').classList.remove('hidden');
     $('who').textContent = me.email + ' (' + me.role + ')';
     $('uploadBox').classList.toggle('hidden', me.role !== 'owner');
+    $('deletedBox').classList.toggle('hidden', me.role !== 'owner');
     say('Logged in.');
     loadDocs();
   } catch (e) { say(e.message, true); }
@@ -102,9 +117,10 @@ async function login() {
 
 function logout() {
   token = null; me = null; shareDocId = null;
-  $('app').classList.add('hidden'); $('shareBox').classList.add('hidden');
+  $('app').classList.add('hidden');
+  $('shareBox').classList.add('hidden'); $('histBox').classList.add('hidden');
   $('loginBox').classList.remove('hidden');
-  $('docs').replaceChildren();
+  $('docs').replaceChildren(); $('deleted').replaceChildren(); $('hist').replaceChildren();
   say('Logged out.');
 }
 
@@ -120,7 +136,8 @@ async function loadDocs() {
       act.append(btn('Download', () => download(d)),
                  btn('Rename', () => rename(d)));
       if (d.owner_id === me.id) {
-        act.append(btn('Share', () => openShare(d)), btn('Delete', () => remove(d)));
+        act.append(btn('Share', () => openShare(d)), btn('History', () => openHistory(d)),
+                   btn('Delete', () => remove(d)));
       }
       tr.append(act);
       return tr;
@@ -158,7 +175,7 @@ async function rename(d) {
 
 async function remove(d) {
   if (!confirm('Delete ' + d.name + '?')) return;
-  try { await api('/documents/' + d.id, { method: 'DELETE' }); say('Deleted.'); closeShare(); loadDocs(); }
+  try { await api('/documents/' + d.id, { method: 'DELETE' }); say('Deleted. You can restore it from the Deleted panel.'); closeShare(); loadDocs(); loadDeleted(true); }
   catch (e) { say(e.message, true); }
 }
 
@@ -199,12 +216,46 @@ async function revoke(s) {
   catch (e) { say(e.message, true); }
 }
 
+async function openHistory(d) {
+  try {
+    const list = await (await api('/documents/' + d.id + '/history')).json();
+    $('histDoc').textContent = d.name;
+    $('histBox').classList.remove('hidden');
+    $('hist').replaceChildren(...list.map(h => {
+      const tr = document.createElement('tr');
+      tr.append(cell(String(h.time).replace('T', ' ').slice(0, 19)), cell(h.actor || ''),
+                cell(h.action), cell(h.result));
+      return tr;
+    }));
+    if (!list.length) say('No history yet.');
+  } catch (e) { say(e.message, true); }
+}
+
+async function loadDeleted(quiet) {
+  try {
+    const list = await (await api('/documents/deleted/list')).json();
+    $('deleted').replaceChildren(...list.map(d => {
+      const tr = document.createElement('tr');
+      tr.append(cell(d.name));
+      const td = document.createElement('td');
+      td.append(btn('Restore', async () => {
+        try { await api('/documents/' + d.id + '/restore', { method: 'POST' });
+              say('Restored.'); loadDeleted(true); loadDocs(); }
+        catch (e) { say(e.message, true); }
+      }));
+      tr.append(td); return tr;
+    }));
+    if (!list.length && !quiet) say('No deleted documents.');
+  } catch (e) { say(e.message, true); }
+}
+
 $('loginBtn').onclick = login;
 $('password').onkeydown = e => { if (e.key === 'Enter') login(); };
 $('logoutBtn').onclick = logout;
 $('uploadBtn').onclick = upload;
 $('searchBtn').onclick = loadDocs;
 $('shareBtn').onclick = share;
+$('deletedBtn').onclick = () => loadDeleted(false);
 </script>
 </body>
 </html>
