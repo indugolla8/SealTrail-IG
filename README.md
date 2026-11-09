@@ -26,8 +26,6 @@ python -m app.seed
 uvicorn app.main:app --reload
 ```
 
-Open http://127.0.0.1:8000/docs and use **Authorize** to log in.
-
 ## Demo accounts
 
 | Role | Email | Password |
