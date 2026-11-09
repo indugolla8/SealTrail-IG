@@ -1,4 +1,6 @@
-﻿# SealTrail-IG
+Live demo: https://sealtrail-ig.onrender.com
+
+# SealTrail-IG
 
 A small FastAPI service for storing documents with strict per-user access control and a tamper-evident audit log.
 
@@ -69,3 +71,6 @@ The tests use a temporary database, so your real data and audit log are not touc
 ## Security notes
 
 See [THREATS.md](THREATS.md) for the threat model and known gaps.
+
+## Demo notes
+There is no sign-up page. The three demo accounts above are created by a seed script on startup. Uploaded documents may reset when the free Render server restarts.
